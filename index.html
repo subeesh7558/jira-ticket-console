@@ -47,6 +47,11 @@
   .search { width:240px; }
   .field select { border:0; outline:0; background:transparent; color:var(--fg); font:inherit; font-weight:500; cursor:pointer; max-width:150px; }
   .field select option { background:var(--surface); color:var(--fg); }
+  .filters { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-bottom:16px; }
+  .filters .field { box-shadow:none; }
+  .clear { appearance:none; border:0; background:transparent; color:var(--muted); font:inherit; cursor:pointer; padding:0 6px; }
+  .clear:hover { color:var(--accent); }
+  .attn { margin-left:8px; }
   .proj { width:130px; } .proj input { width:64px; font-weight:500; }
   .days { width:110px; } .days input { width:44px; }
   .btn { appearance:none; border:1px solid var(--line-strong); background:var(--surface); color:var(--fg); font:inherit; font-weight:500;
@@ -174,7 +179,6 @@
   <span class="grow"></span>
   <div class="ctl">
     <div class="field search"><svg><use href="#i-search"/></svg><input id="q" type="search" placeholder="Filter tickets…" autocomplete="off"></div>
-    <div class="field"><label for="eco">Ecosystem</label><select id="eco"><option value="">All</option></select></div>
     <div class="field proj"><label for="project">Project</label><input id="project" type="text" spellcheck="false"></div>
     <div class="field days" id="days-wrap" hidden><label for="days">Days</label><input id="days" type="number" min="1" max="90" value="1"></div>
     <button class="btn" id="export"><svg><use href="#i-download"/></svg>Export TXT</button>
@@ -187,6 +191,17 @@
     <div><h1 id="title">To Do</h1><p class="sub" id="subtitle"></p></div>
   </div>
   <div id="notice" class="notice" hidden></div>
+  <div class="filters" id="filters">
+    <div class="field"><label for="eco">Ecosystem</label><select id="eco"><option value="">All</option></select></div>
+    <div class="field"><label for="mrf">MR</label><select id="mrf">
+      <option value="">All</option><option value="opened">Open</option><option value="merged">Merged</option><option value="closed">Closed</option><option value="none">No MR</option></select></div>
+    <div class="field" id="patch-f"><label for="patchf">Patch</label><select id="patchf">
+      <option value="">All</option><option value="yes">Ready</option><option value="no">Missing</option></select></div>
+    <div class="field" id="by-f" hidden><label for="byf">Resolved by</label><select id="byf"><option value="">All</option></select></div>
+    <div class="field" id="attn-f"><label for="attnf">Show</label><select id="attnf">
+      <option value="">Everything</option><option value="1">Needs attention</option></select></div>
+    <button class="clear" id="clear">Clear filters</button>
+  </div>
   <div class="stats" id="stats"></div>
   <div id="content"></div>
 </main>
@@ -275,6 +290,21 @@ function syncEco(rows) {
   sel.value = list.includes(cur) ? cur : "";
   return sel.value;
 }
+function attention(r) {
+  if (r.mr_state === "merged") return "MR merged — ticket still To Do";
+  if (r.patch === "yes" && !r.mr) return "Patch ready, no MR yet";
+  return "";
+}
+function mrKind(r) { return !r.mr ? "none" : (r.mr_state || "unknown"); }
+function syncBy(rows) {
+  const sel = $("byf"), cur = sel.value;
+  const list = [...new Set(rows.map(r => r.resolved_by).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  sel.replaceChildren(el("option", { value: "", textContent: "All" }), ...list.map(e => el("option", { value: e, textContent: e })));
+  sel.value = list.includes(cur) ? cur : "";
+  return sel.value;
+}
+function filtersActive() { return ["eco", "mrf", "patchf", "byf", "attnf"].some(id => $(id).value) || $("q").value.trim(); }
+
 const match = (q, ...f) => !q || f.join(" ").toLowerCase().includes(q);
 
 function mrCells(r) {
@@ -291,7 +321,11 @@ function renderTodo() {
   const rows = data.todo; if (!rows) return;
   const q = $("q").value.trim().toLowerCase();
   const eco = syncEco(rows);
-  const shown = rows.filter(r => (!eco || r.ecosystem === eco) && match(q, r.key, r.vuln_id, r.ecosystem, r.package, r.version));
+  const shown = rows.filter(r => (!eco || r.ecosystem === eco)
+    && (!$("mrf").value || mrKind(r) === $("mrf").value)
+    && (!$("patchf").value || r.patch === $("patchf").value)
+    && (!$("attnf").value || attention(r))
+    && match(q, r.key, r.vuln_id, r.ecosystem, r.package, r.version));
   view.todo = shown;
   $("title").textContent = "To Do"; $("subtitle").textContent = "Open vulnerability tickets assigned to you.";
   const patched = rows.filter(r => r.patch === "yes").length, withMr = rows.filter(r => r.mr).length;
@@ -299,14 +333,14 @@ function renderTodo() {
     statCard("Open tickets", rows.length, "Assigned to you", "var(--accent)"),
     statCard("Patch ready", patched, `${rows.length - patched} still missing`, "var(--ok)"),
     statCard("MR opened", withMr, `${rows.length - withMr} without an MR`, "var(--accent-2)"),
-    statCard("Packages", new Set(rows.map(r => r.package)).size, "Distinct affected", "var(--warn)"));
+    statCard("Needs attention", rows.filter(attention).length, "Merged MR or patch without MR", "var(--warn)"));
   $("n-todo").textContent = rows.length;
   if (!shown.length) return $("content").replaceChildren(empty(rows.length ? "No matches" : "Inbox zero", rows.length ? "Try a different filter." : "No tickets in To Do."));
 
   const body = el("tbody");
   for (const r of shown) {
     body.append(el("tr", {},
-      el("td", {}, link(r.url, r.key, "key")),
+      el("td", {}, link(r.url, r.key, "key"), attention(r) ? el("span", { class: "attn", title: attention(r) }, pill("Attention", "warn")) : null),
       el("td", { class: "mono", textContent: r.vuln_id }),
       el("td", {}, el("span", { class: "eco", textContent: r.ecosystem || "—" })),
       el("td", { class: "pkg", textContent: r.package }),
@@ -316,7 +350,7 @@ function renderTodo() {
   }
   const head = ["Ticket", "Vulnerability", "Ecosystem", "Package", "Version", "Patch", "MR", ""].map(h => el("th", { textContent: h }));
   $("content").replaceChildren(el("div", { class: "card" },
-    el("div", { class: "card-h" }, el("h2", { textContent: "Tickets" }), pill(shown.length + (q || eco ? " of " + rows.length : ""), "plain")),
+    el("div", { class: "card-h" }, el("h2", { textContent: "Tickets" }), pill(shown.length + (filtersActive() ? " of " + rows.length : ""), "plain")),
     el("div", { class: "scroll" }, el("table", {}, el("thead", {}, el("tr", {}, ...head)), body))));
 }
 
@@ -338,7 +372,11 @@ function renderDone() {
   const rows = data.done; if (!rows) return;
   const q = $("q").value.trim().toLowerCase();
   const eco = syncEco(rows);
-  const shown = rows.filter(r => (!eco || r.ecosystem === eco) && match(q, r.key, r.resolved_by, r.date, r.package, r.version, r.vuln_id, r.status, r.ecosystem));
+  const by = syncBy(rows);
+  const shown = rows.filter(r => (!eco || r.ecosystem === eco)
+    && (!$("mrf").value || mrKind(r) === $("mrf").value)
+    && (!by || r.resolved_by === by)
+    && match(q, r.key, r.resolved_by, r.date, r.package, r.version, r.vuln_id, r.status, r.ecosystem));
   view.done = shown;
   $("title").textContent = "Done"; $("subtitle").textContent = "Recently resolved tickets, newest first.";
   const you = rows.filter(r => r.resolved_by === "You").length, auto = rows.filter(r => /automation/i.test(r.resolved_by)).length;
@@ -389,6 +427,8 @@ function show(t) {
   tab = t;
   $("tab-todo").classList.toggle("active", t === "todo"); $("tab-done").classList.toggle("active", t === "done");
   $("days-wrap").hidden = t !== "done"; $("stats").replaceChildren();
+  $("patch-f").hidden = $("attn-f").hidden = t !== "todo"; $("by-f").hidden = t !== "done";
+  if (t === "todo") $("byf").value = ""; else { $("patchf").value = ""; $("attnf").value = ""; }
   load();
 }
 /* ---------- export to txt ---------- */
@@ -426,7 +466,8 @@ $("tab-done").onclick = () => show("done");
 $("refresh").onclick = load;
 $("days").onchange = load; $("project").onchange = () => { data = { todo: null, done: null }; load(); };
 $("q").oninput = render;
-$("eco").onchange = render;
+["eco", "mrf", "patchf", "byf", "attnf"].forEach(id => $(id).onchange = render);
+$("clear").onclick = () => { ["eco", "mrf", "patchf", "byf", "attnf"].forEach(id => $(id).value = ""); $("q").value = ""; render(); };
 
 (async () => {
   try { const c = await api("/api/config"); $("project").value = c.project; gitlabOk = c.gitlab; } catch (e) {}

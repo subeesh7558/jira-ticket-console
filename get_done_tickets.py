@@ -16,17 +16,19 @@ Run `python3 get_done_tickets.py --setup` once if you haven't already.
 import argparse
 import configparser
 import getpass
+import json
 import os
 import re
 import stat
 import sys
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
 
 PAGE_SIZE = 100
 CONFIG_PATH = os.path.expanduser("~/.config/jira-pull-script/config")
-FIELDS = ["summary", "description", "comment", "status"]
+FIELDS = ["summary", "description", "comment", "status", "updated"]
 
 
 # ---------------------------------------------------------------------------
@@ -84,6 +86,29 @@ def load_credentials() -> tuple[str, str, str]:
 # Jira API
 # ---------------------------------------------------------------------------
 
+CHANGELOG_CACHE_PATH = os.path.expanduser("~/.config/jira-pull-script/changelog_cache.json")
+
+
+def _load_changelog_cache() -> dict:
+    try:
+        with open(CHANGELOG_CACHE_PATH) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def _save_changelog_cache(cache: dict) -> None:
+    try:
+        os.makedirs(os.path.dirname(CHANGELOG_CACHE_PATH), exist_ok=True)
+        tmp = CHANGELOG_CACHE_PATH + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(cache, f)
+        os.chmod(tmp, stat.S_IRUSR | stat.S_IWUSR)
+        os.replace(tmp, CHANGELOG_CACHE_PATH)
+    except OSError:
+        pass
+
+
 def get_done_issues(jira_url: str, email: str, api_token: str, jql: str) -> list[dict]:
     """Fetch issues matching jql, including their full changelog."""
     issues = []
@@ -109,7 +134,17 @@ def get_done_issues(jira_url: str, email: str, api_token: str, jql: str) -> list
     auth = (email, api_token)
     hdrs = {"Accept": "application/json"}
 
+    # A finished ticket's history only changes when the ticket itself changes, so
+    # the last status transition is cached on disk, keyed by the ticket's "updated" time.
+    cache = _load_changelog_cache()
+    lock = threading.Lock()
+
     def fetch_changelog(issue: dict) -> None:
+        updated = issue["fields"].get("updated", "")
+        hit = cache.get(issue["key"])
+        if hit and updated and hit.get("updated") == updated:
+            issue["changelog"] = {"histories": [hit["history"]] if hit["history"] else []}
+            return
         histories = []
         url = f"{jira_url}/rest/api/3/issue/{issue['key']}/changelog"
         while url:
@@ -119,11 +154,15 @@ def get_done_issues(jira_url: str, email: str, api_token: str, jql: str) -> list
             histories.extend(page.get("values", []))
             url = page.get("nextPage")
         issue["changelog"] = {"histories": histories}
+        with lock:
+            cache[issue["key"]] = {"updated": updated, "history": last_status_history(issue)}
 
     with ThreadPoolExecutor(max_workers=10) as executor:
         futures = [executor.submit(fetch_changelog, issue) for issue in issues]
         for future in as_completed(futures):
             future.result()  # re-raise any exception
+
+    _save_changelog_cache(cache)
 
     return issues
 
