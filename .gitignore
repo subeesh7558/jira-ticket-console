@@ -1,0 +1,8 @@
+__pycache__/
+.claude/
+issues.txt
+done_issues.txt
+run.txt
+SUMMARY.md
+*.txt.bak
+.DS_Store
