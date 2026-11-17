@@ -24,7 +24,7 @@
   /* Top bar */
   .topbar { position:sticky; top:0; z-index:20; backdrop-filter:saturate(180%) blur(14px);
     background:color-mix(in srgb, var(--bg) 72%, transparent); border-bottom:1px solid var(--line); }
-  .topbar-in { max-width:1280px; margin:0 auto; padding:12px 24px; display:flex; align-items:center; gap:20px; flex-wrap:wrap; }
+  .topbar-in { max-width:1760px; margin:0 auto; padding:12px 24px; display:flex; align-items:center; gap:20px; flex-wrap:wrap; }
   .brand { display:flex; align-items:center; gap:10px; font-weight:650; letter-spacing:-.01em; font-size:15px; }
   .logo { width:28px; height:28px; border-radius:8px; background:linear-gradient(135deg,var(--accent),var(--accent-2));
     display:grid; place-items:center; color:#fff; box-shadow:0 4px 12px rgba(91,91,240,.35); }
@@ -63,7 +63,7 @@
   @keyframes spin { to { transform:rotate(360deg); } }
 
   /* Layout */
-  main { max-width:1280px; margin:0 auto; padding:24px; }
+  main { max-width:1760px; margin:0 auto; padding:24px; }
   .pagehead { display:flex; align-items:end; justify-content:space-between; gap:16px; margin-bottom:18px; flex-wrap:wrap; }
   h1 { margin:0; font-size:24px; letter-spacing:-.02em; font-weight:700; }
   .sub { color:var(--muted); margin:2px 0 0; }
@@ -85,11 +85,14 @@
   .card-h { display:flex; align-items:center; gap:10px; padding:14px 18px; border-bottom:1px solid var(--line); }
   .card-h h2 { margin:0; font-size:14px; font-weight:600; }
   .card-h .pill { margin-left:2px; }
-  .scroll { overflow-x:auto; }
+  .scroll { overflow-x:auto; } /* only kicks in on very narrow windows */
   table { width:100%; border-collapse:separate; border-spacing:0; }
   th { text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:var(--faint); font-weight:600;
-    padding:10px 18px; background:var(--surface-2); border-bottom:1px solid var(--line); white-space:nowrap; }
-  td { padding:12px 18px; border-bottom:1px solid var(--line); white-space:nowrap; vertical-align:middle; }
+    padding:10px 12px; background:var(--surface-2); border-bottom:1px solid var(--line); white-space:nowrap; }
+  td { padding:12px 12px; border-bottom:1px solid var(--line); vertical-align:middle; overflow-wrap:anywhere; }
+  /* Fit the card width: long text wraps, short items (links, pills, buttons, times) never break. */
+  td .ulink, td .pill, td .eco, td .who, td .close-btn, td.num, td.mono, td .mono { white-space:nowrap; overflow-wrap:normal; }
+  td.pkg { min-width:110px; }
   tbody tr { transition:background .12s; }
   tbody tr:hover { background:var(--surface-2); }
   tbody tr:last-child td { border-bottom:0; }
@@ -102,7 +105,7 @@
   .key { font-weight:600; }
   .pkg { font-weight:600; }
   .ver { color:var(--muted); }
-  .mr-link { display:inline-flex; align-items:center; gap:6px; max-width:260px; overflow:hidden; text-overflow:ellipsis; }
+  .mr-link { display:inline-flex; align-items:center; gap:6px; max-width:120px; overflow:hidden; text-overflow:ellipsis; }
   .none { color:var(--faint); }
   .right { text-align:right; }
 
@@ -193,6 +196,8 @@
   <div id="notice" class="notice" hidden></div>
   <div class="filters" id="filters">
     <div class="field"><label for="eco">Ecosystem</label><select id="eco"><option value="">All</option></select></div>
+    <div class="field"><label for="pkg">Package</label><select id="pkg"><option value="">All</option></select></div>
+    <div class="field"><label for="ver">Version</label><select id="ver"><option value="">All</option></select></div>
     <div class="field"><label for="mrf">MR</label><select id="mrf">
       <option value="">All</option><option value="opened">Open</option><option value="merged">Merged</option><option value="closed">Closed</option><option value="none">No MR</option></select></div>
     <div class="field" id="patch-f"><label for="patchf">Patch</label><select id="patchf">
@@ -283,6 +288,16 @@ function skeleton() {
 function empty(title, text) {
   return el("div", { class: "card" }, el("div", { class: "empty" }, el("div", { class: "ic" }, icon("i-inbox")), el("b", { textContent: title }), el("span", { textContent: text })));
 }
+function syncOptions(id, values) {
+  const sel = $(id), cur = sel.value;
+  const list = [...new Set(values.filter(Boolean))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  sel.replaceChildren(el("option", { value: "", textContent: "All" }), ...list.map(e => el("option", { value: e, textContent: e })));
+  sel.value = list.includes(cur) ? cur : "";
+  return sel.value;
+}
+// Package list narrows to the chosen ecosystem; version list narrows to the chosen package.
+function syncPkg(rows, eco) { return syncOptions("pkg", rows.filter(r => !eco || r.ecosystem === eco).map(r => r.package)); }
+function syncVer(rows, eco, pkg) { return syncOptions("ver", rows.filter(r => (!eco || r.ecosystem === eco) && (!pkg || r.package === pkg)).map(r => r.version)); }
 function syncEco(rows) {
   const sel = $("eco"), cur = sel.value;
   const list = [...new Set(rows.map(r => r.ecosystem).filter(Boolean))].sort((a, b) => a.localeCompare(b));
@@ -303,7 +318,7 @@ function syncBy(rows) {
   sel.value = list.includes(cur) ? cur : "";
   return sel.value;
 }
-function filtersActive() { return ["eco", "mrf", "patchf", "byf", "attnf"].some(id => $(id).value) || $("q").value.trim(); }
+function filtersActive() { return ["eco", "pkg", "ver", "mrf", "patchf", "byf", "attnf"].some(id => $(id).value) || $("q").value.trim(); }
 
 const match = (q, ...f) => !q || f.join(" ").toLowerCase().includes(q);
 
@@ -320,8 +335,8 @@ function mrCells(r) {
 function renderTodo() {
   const rows = data.todo; if (!rows) return;
   const q = $("q").value.trim().toLowerCase();
-  const eco = syncEco(rows);
-  const shown = rows.filter(r => (!eco || r.ecosystem === eco)
+  const eco = syncEco(rows), pkg = syncPkg(rows, eco), ver = syncVer(rows, eco, pkg);
+  const shown = rows.filter(r => (!eco || r.ecosystem === eco) && (!pkg || r.package === pkg) && (!ver || r.version === ver)
     && (!$("mrf").value || mrKind(r) === $("mrf").value)
     && (!$("patchf").value || r.patch === $("patchf").value)
     && (!$("attnf").value || attention(r))
@@ -371,9 +386,9 @@ function statusPill(name) {
 function renderDone() {
   const rows = data.done; if (!rows) return;
   const q = $("q").value.trim().toLowerCase();
-  const eco = syncEco(rows);
+  const eco = syncEco(rows), pkg = syncPkg(rows, eco), ver = syncVer(rows, eco, pkg);
   const by = syncBy(rows);
-  const shown = rows.filter(r => (!eco || r.ecosystem === eco)
+  const shown = rows.filter(r => (!eco || r.ecosystem === eco) && (!pkg || r.package === pkg) && (!ver || r.version === ver)
     && (!$("mrf").value || mrKind(r) === $("mrf").value)
     && (!by || r.resolved_by === by)
     && match(q, r.key, r.resolved_by, r.date, r.package, r.version, r.vuln_id, r.status, r.ecosystem));
@@ -466,8 +481,8 @@ $("tab-done").onclick = () => show("done");
 $("refresh").onclick = load;
 $("days").onchange = load; $("project").onchange = () => { data = { todo: null, done: null }; load(); };
 $("q").oninput = render;
-["eco", "mrf", "patchf", "byf", "attnf"].forEach(id => $(id).onchange = render);
-$("clear").onclick = () => { ["eco", "mrf", "patchf", "byf", "attnf"].forEach(id => $(id).value = ""); $("q").value = ""; render(); };
+["eco", "pkg", "ver", "mrf", "patchf", "byf", "attnf"].forEach(id => $(id).onchange = render);
+$("clear").onclick = () => { ["eco", "pkg", "ver", "mrf", "patchf", "byf", "attnf"].forEach(id => $(id).value = ""); $("q").value = ""; render(); };
 
 (async () => {
   try { const c = await api("/api/config"); $("project").value = c.project; gitlabOk = c.gitlab; } catch (e) {}
